@@ -1,5 +1,5 @@
 import React, { useState } from "react"
-import { motion } from "framer-motion"
+import { motion, AnimatePresence } from "framer-motion"
 import {
   BookOpen,
   BarChart3,
@@ -15,9 +15,23 @@ import {
   Cpu,
   TrendingUp,
   Clock,
+  Loader2,
+  CheckCircle2,
+  Download,
+  RotateCcw,
+  Image as ImageIcon,
+  StickyNote,
+  BookMarked,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { DocumentInfo } from "@/services/api"
+import {
+  generatePresentation,
+  getPresentationDownloadUrl,
+  type PresentationAudience,
+  type PresentationGenerateResponse,
+  type PresentationStyle,
+} from "@/services/api"
 import { DocumentUpload } from "@/components/chat/document-upload"
 import type { UploadProgress } from "@/hooks/useDocuments"
 
@@ -63,7 +77,13 @@ export function WorkspaceViews({
     case "reports":
       return <ReportGeneratorView onGenerate={onSwitchToAssistant} />
     case "presentations":
-      return <PresentationGeneratorView onGenerate={onSwitchToAssistant} />
+      return (
+        <PresentationGeneratorView
+          documents={documents}
+          onError={onError}
+          onFallbackToAssistant={onSwitchToAssistant}
+        />
+      )
     case "search":
       return (
         <SemanticSearchView
@@ -379,20 +399,90 @@ function ReportGeneratorView({
 /* =========================================================
    4. PRESENTATION GENERATOR VIEW
    ========================================================= */
+type GenStage = "idle" | "planning" | "content" | "visuals" | "building" | "done" | "error"
+
+const STAGE_COPY: Record<Exclude<GenStage, "idle" | "done" | "error">, string> = {
+  planning: "Planning presentation structure…",
+  content: "Generating slide content…",
+  visuals: "Finding visuals…",
+  building: "Building PowerPoint…",
+}
+
 function PresentationGeneratorView({
-  onGenerate,
+  documents,
+  onError,
+  onFallbackToAssistant,
 }: {
-  onGenerate: (prompt: string) => void
+  documents: DocumentInfo[]
+  onError: (message: string) => void
+  onFallbackToAssistant: (prompt?: string) => void
 }) {
   const [topic, setTopic] = useState("")
-  const [slideCount, setSlideCount] = useState("8")
+  const [mode, setMode] = useState<"general" | "rag">("general")
+  const [slideCount, setSlideCount] = useState(10)
+  const [audience, setAudience] = useState<PresentationAudience>("business")
+  const [style, setStyle] = useState<PresentationStyle>("modern")
+  const [includeImages, setIncludeImages] = useState(true)
+  const [includeNotes, setIncludeNotes] = useState(true)
+  const [includeSources, setIncludeSources] = useState(true)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [stage, setStage] = useState<GenStage>("idle")
+  const [result, setResult] = useState<PresentationGenerateResponse | null>(null)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  const isGenerating = stage !== "idle" && stage !== "done" && stage !== "error"
+  const ragUnavailable = mode === "rag" && documents.length === 0
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!topic.trim()) return
-    onGenerate(
-      `Create a comprehensive ${slideCount}-slide presentation deck outline on: "${topic}". Include slide titles, bullet points, key takeaways, and speaker notes.`
-    )
+    if (!topic.trim() || isGenerating) return
+
+    setResult(null)
+    setErrorMsg(null)
+    setStage("planning")
+
+    // Staged progress is cosmetic — the backend call below is a single request,
+    // but we advance the UI through the pipeline stages the API actually performs
+    // (planning -> content -> visuals -> building) so generation never looks frozen.
+    const advance = window.setTimeout(() => setStage("content"), 900)
+    const advance2 = window.setTimeout(() => setStage("visuals"), 1900)
+    const advance3 = window.setTimeout(() => setStage("building"), 2900)
+
+    try {
+      const response = await generatePresentation({
+        topic: topic.trim(),
+        mode,
+        slide_count: slideCount,
+        audience,
+        tone: "professional",
+        style,
+        include_images: includeImages,
+        include_notes: includeNotes,
+        include_sources: includeSources,
+        document_ids: mode === "rag" ? documents.map((d) => d.document_id) : [],
+      })
+      window.clearTimeout(advance)
+      window.clearTimeout(advance2)
+      window.clearTimeout(advance3)
+      setResult(response)
+      setStage("done")
+      response.warnings.forEach((w) => onError(w))
+    } catch (err) {
+      window.clearTimeout(advance)
+      window.clearTimeout(advance2)
+      window.clearTimeout(advance3)
+      const message =
+        err instanceof Error ? err.message : "Presentation generation failed. Please try again."
+      setErrorMsg(message)
+      setStage("error")
+      onError(message)
+    }
+  }
+
+  const handleGenerateAgain = () => {
+    setResult(null)
+    setErrorMsg(null)
+    setStage("idle")
   }
 
   return (
@@ -403,55 +493,265 @@ function PresentationGeneratorView({
           Presentation Generator
         </h2>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Turn documents, research topics, or ideas into structured slide decks
+          Turn a topic or your indexed documents into a downloadable, professionally laid out
+          PowerPoint deck
         </p>
       </div>
 
-      <motion.form
-        onSubmit={handleSubmit}
-        whileHover={{ y: -4, scale: 1.01 }}
-        style={{ transformStyle: "preserve-3d", perspective: 800 }}
-        className="p-6 rounded-xl bg-white/5 border border-white/10 hover:border-primary/30 hover:shadow-lg transition-all space-y-4"
-      >
-        <div>
-          <label className="block text-xs font-medium text-white mb-1.5">
-            Presentation Topic or Document Source
-          </label>
-          <textarea
-            rows={3}
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            placeholder="e.g. Architecture and RAG pipeline of Autara for enterprise deployment"
-            className="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-xs text-white placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary"
-          />
-        </div>
+      <AnimatePresence mode="wait">
+        {stage === "idle" || stage === "error" ? (
+          <motion.form
+            key="form"
+            onSubmit={handleSubmit}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="p-6 rounded-xl bg-white/5 border border-white/10 hover:border-primary/30 transition-all space-y-5"
+          >
+            <div>
+              <label className="block text-xs font-medium text-white mb-1.5">
+                What should this presentation be about?
+              </label>
+              <textarea
+                rows={3}
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                placeholder="e.g. Electronic Waste Management — challenges, impact and sustainable solutions"
+                maxLength={400}
+                className="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-xs text-white placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary"
+              />
+            </div>
 
-        <div className="flex items-center gap-4">
-          <div>
-            <label className="block text-xs font-medium text-white mb-1">
-              Number of Slides
-            </label>
-            <select
-              value={slideCount}
-              onChange={(e) => setSlideCount(e.target.value)}
-              className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
+            <div>
+              <label className="block text-xs font-medium text-white mb-2">Source</label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMode("general")}
+                  className={`flex-1 text-left px-3 py-2.5 rounded-lg border text-xs transition-all ${
+                    mode === "general"
+                      ? "bg-primary/15 border-primary/40 text-white"
+                      : "bg-black/20 border-white/10 text-muted-foreground hover:border-white/20"
+                  }`}
+                >
+                  <span className="block font-semibold mb-0.5">AI Knowledge</span>
+                  <span className="block text-[11px] opacity-80">
+                    Generated from the topic using Gemini
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("rag")}
+                  className={`flex-1 text-left px-3 py-2.5 rounded-lg border text-xs transition-all ${
+                    mode === "rag"
+                      ? "bg-primary/15 border-primary/40 text-white"
+                      : "bg-black/20 border-white/10 text-muted-foreground hover:border-white/20"
+                  }`}
+                >
+                  <span className="block font-semibold mb-0.5">My Documents</span>
+                  <span className="block text-[11px] opacity-80">
+                    {documents.length > 0
+                      ? `Grounded in ${documents.length} indexed document${documents.length === 1 ? "" : "s"}`
+                      : "No documents indexed yet"}
+                  </span>
+                </button>
+              </div>
+              {ragUnavailable && (
+                <p className="text-[11px] text-amber-400/90 mt-1.5">
+                  Upload documents in Knowledge Base first, or generation will fall back to
+                  topic-only content.
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-white mb-1">Slides</label>
+                <input
+                  type="number"
+                  min={3}
+                  max={30}
+                  value={slideCount}
+                  onChange={(e) => setSlideCount(Number(e.target.value))}
+                  className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-white mb-1">Audience</label>
+                <select
+                  value={audience}
+                  onChange={(e) => setAudience(e.target.value as PresentationAudience)}
+                  className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
+                >
+                  <option value="general">General</option>
+                  <option value="student">Student</option>
+                  <option value="academic">Academic</option>
+                  <option value="business">Business</option>
+                  <option value="technical">Technical</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-white mb-1">Style</label>
+                <select
+                  value={style}
+                  onChange={(e) => setStyle(e.target.value as PresentationStyle)}
+                  className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary"
+                >
+                  <option value="modern">Modern</option>
+                  <option value="corporate">Corporate</option>
+                  <option value="academic">Academic</option>
+                  <option value="minimal">Minimal</option>
+                  <option value="dark">Dark</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-4 pt-1">
+              <label className="flex items-center gap-2 text-xs text-white cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeImages}
+                  onChange={(e) => setIncludeImages(e.target.checked)}
+                  className="accent-primary"
+                />
+                <ImageIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                Include images
+              </label>
+              <label className="flex items-center gap-2 text-xs text-white cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeNotes}
+                  onChange={(e) => setIncludeNotes(e.target.checked)}
+                  className="accent-primary"
+                />
+                <StickyNote className="h-3.5 w-3.5 text-muted-foreground" />
+                Speaker notes
+              </label>
+              <label className="flex items-center gap-2 text-xs text-white cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeSources}
+                  onChange={(e) => setIncludeSources(e.target.checked)}
+                  className="accent-primary"
+                />
+                <BookMarked className="h-3.5 w-3.5 text-muted-foreground" />
+                Sources slide
+              </label>
+            </div>
+
+            {stage === "error" && errorMsg && (
+              <p className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                {errorMsg}
+              </p>
+            )}
+
+            <Button
+              type="submit"
+              disabled={!topic.trim()}
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground text-xs h-9 font-medium"
             >
-              <option value="5">5 Slides (Pitch / Brief)</option>
-              <option value="8">8 Slides (Standard Deck)</option>
-              <option value="12">12 Slides (Deep Dive)</option>
-            </select>
-          </div>
-        </div>
+              <Sparkles className="h-3.5 w-3.5 mr-2" />
+              Generate Presentation
+            </Button>
+          </motion.form>
+        ) : isGenerating ? (
+          <motion.div
+            key="progress"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="p-6 rounded-xl bg-white/5 border border-white/10 space-y-4"
+          >
+            {(["planning", "content", "visuals", "building"] as const).map((s) => {
+              const order = ["planning", "content", "visuals", "building"]
+              const currentIdx = order.indexOf(stage)
+              const thisIdx = order.indexOf(s)
+              const isDone = thisIdx < currentIdx
+              const isCurrent = thisIdx === currentIdx
+              return (
+                <div key={s} className="flex items-center gap-3 text-xs">
+                  {isDone ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                  ) : isCurrent ? (
+                    <Loader2 className="h-4 w-4 text-primary animate-spin shrink-0" />
+                  ) : (
+                    <div className="h-4 w-4 rounded-full border border-white/15 shrink-0" />
+                  )}
+                  <span className={isDone || isCurrent ? "text-white" : "text-muted-foreground"}>
+                    {STAGE_COPY[s]}
+                  </span>
+                </div>
+              )
+            })}
+          </motion.div>
+        ) : (
+          result && (
+            <motion.div
+              key="result"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="p-6 rounded-xl bg-white/5 border border-primary/30 space-y-4"
+            >
+              <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold">
+                <CheckCircle2 className="h-4 w-4" />
+                {result.slide_count} slides generated
+              </div>
 
-        <Button
-          type="submit"
-          disabled={!topic.trim()}
-          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground text-xs h-9 font-medium"
-        >
-          <Sparkles className="h-3.5 w-3.5 mr-2" />
-          Generate Slide Deck in Assistant
-        </Button>
-      </motion.form>
+              <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+                {result.outline.map((item) => (
+                  <div
+                    key={item.slide_number}
+                    className="flex items-center gap-3 px-3 py-2 rounded-lg bg-black/20 border border-white/5 text-xs"
+                  >
+                    <span className="font-mono text-muted-foreground w-6 shrink-0">
+                      {String(item.slide_number).padStart(2, "0")}
+                    </span>
+                    <span className="text-white truncate">{item.title}</span>
+                    <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">
+                      {item.type.replace("_", " ")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <Button
+                  type="button"
+                  onClick={handleGenerateAgain}
+                  variant="outline"
+                  className="flex-1 text-xs h-9 border-white/15 text-white hover:bg-white/5"
+                >
+                  <RotateCcw className="h-3.5 w-3.5 mr-2" />
+                  Generate Again
+                </Button>
+                <a
+                  href={getPresentationDownloadUrl(result.download_url)}
+                  download={result.filename}
+                  className="flex-1"
+                >
+                  <Button
+                    type="button"
+                    className="w-full bg-primary hover:bg-primary/90 text-primary-foreground text-xs h-9 font-medium"
+                  >
+                    <Download className="h-3.5 w-3.5 mr-2" />
+                    Download PPTX
+                  </Button>
+                </a>
+              </div>
+            </motion.div>
+          )
+        )}
+      </AnimatePresence>
+
+      <button
+        type="button"
+        onClick={() => onFallbackToAssistant()}
+        className="text-[11px] text-muted-foreground hover:text-white transition-colors flex items-center gap-1"
+      >
+        Prefer a quick outline in chat instead? Ask the AI Assistant
+        <ArrowRight className="h-3 w-3" />
+      </button>
     </div>
   )
 }

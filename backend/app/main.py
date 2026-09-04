@@ -1,3 +1,4 @@
+﻿from backend.app.routers import presentations
 from pathlib import Path
 import sys
 import json
@@ -514,3 +515,12 @@ def delete_document(document_id: str):
         "message": "Document deleted successfully",
         "document_id": document_id
     }
+
+# PPT Presentation Generator
+app.include_router(presentations.router)
+
+
+
+from backend.app.routers.reports import router as reports_router
+app.include_router(reports_router)
+

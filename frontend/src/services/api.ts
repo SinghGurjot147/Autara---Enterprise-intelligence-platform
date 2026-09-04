@@ -69,3 +69,57 @@ export async function queryRag(question: string): Promise<QueryResponse> {
 
   return response.data;
 }
+
+/* ---------------------------------------------------------------
+   Presentation Generator
+   Backend: presentations router (see backend/app/routers/presentations.py)
+--------------------------------------------------------------- */
+
+export type PresentationMode = 'general' | 'rag';
+export type PresentationAudience = 'general' | 'student' | 'academic' | 'business' | 'technical';
+export type PresentationTone = 'professional' | 'academic' | 'simple' | 'executive';
+export type PresentationStyle = 'modern' | 'corporate' | 'academic' | 'minimal' | 'dark';
+
+export interface PresentationRequest {
+  topic: string;
+  mode: PresentationMode;
+  slide_count: number;
+  audience: PresentationAudience;
+  tone: PresentationTone;
+  style: PresentationStyle;
+  include_images: boolean;
+  include_notes: boolean;
+  include_sources: boolean;
+  document_ids: string[];
+}
+
+export interface PresentationOutlineItem {
+  slide_number: number;
+  type: string;
+  title: string;
+}
+
+export interface PresentationGenerateResponse {
+  success: boolean;
+  presentation_id: string;
+  filename: string;
+  download_url: string;
+  slide_count: number;
+  outline: PresentationOutlineItem[];
+  warnings: string[];
+}
+
+export async function generatePresentation(
+  req: PresentationRequest,
+): Promise<PresentationGenerateResponse> {
+  const response = await axios.post<PresentationGenerateResponse>(
+    `${API_BASE}/presentations/generate`,
+    req,
+  );
+  return response.data;
+}
+
+export function getPresentationDownloadUrl(downloadUrl: string): string {
+  // downloadUrl comes back from the API as a relative path e.g. "/presentations/<id>/download"
+  return `${API_BASE}${downloadUrl}`;
+}
