@@ -155,19 +155,24 @@ End with a "Sources" section listing the referenced source numbers, document nam
 """
 
 
-def _call_gemini(prompt: str) -> str:
+def _call_gemini(prompt: str, key: str) -> str:
     from google import genai
     from google.genai import types
 
-    key = os.getenv("GOOGLE_API_KEY_1") or os.getenv("GEMINI_API_KEY")
     if not key:
         raise RuntimeError("Gemini API key not configured")
+
     client = genai.Client(api_key=key)
+
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=prompt,
-        config=types.GenerateContentConfig(temperature=0.4, max_output_tokens=7000),
+        config=types.GenerateContentConfig(
+            temperature=0.4,
+            max_output_tokens=7000,
+        ),
     )
+
     return _extract_json_or_text(response.text or "")
 
 
@@ -282,10 +287,17 @@ def generate_report(report_type: str, document_ids: list[str]) -> dict[str, Any]
     provider = "Deterministic local fallback"
 
     providers = [
-        ("Gemini 2.5 Flash", _call_gemini),
-        ("Groq Llama 3.3 70B", _call_groq),
-        ("OpenRouter free", _call_openrouter),
-    ]
+    (
+        "Gemini 2.5 Flash (Key 1)",
+        lambda p: _call_gemini(p, os.getenv("GOOGLE_API_KEY_1", "")),
+    ),
+    (
+        "Gemini 2.5 Flash (Key 2)",
+        lambda p: _call_gemini(p, os.getenv("GOOGLE_API_KEY_2", "")),
+    ),
+    ("Groq Llama 3.3 70B", _call_groq),
+    ("OpenRouter free", _call_openrouter),
+]
 
     for name, fn in providers:
         try:
