@@ -1,61 +1,62 @@
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_chroma import Chroma
-
 from rag.chunking.hierarchical import hierarchical_chunk_documents
-from rag.embeddings.router import get_embeddings, save_provider
 from rag.embeddings.local import get_local_embeddings
 
+
+# --------------------------------------------------
+# ENVIRONMENT
+# --------------------------------------------------
+
 load_dotenv()
+
+
+# --------------------------------------------------
+# LOAD PDF DOCUMENTS
+# --------------------------------------------------
 
 loader = PyPDFDirectoryLoader("documents")
 documents = loader.load()
 
 print(f"Loaded {len(documents)} pages")
 
+
+# --------------------------------------------------
+# HIERARCHICAL CHUNKING
+# --------------------------------------------------
+
 chunks = hierarchical_chunk_documents(documents)
 
 print(f"Created {len(chunks)} child chunks")
+
 
 if chunks:
     print("\nSample chunk metadata:")
     print(chunks[0].metadata)
 
-embeddings = get_embeddings()
+
+# --------------------------------------------------
+# BGE EMBEDDINGS
+# --------------------------------------------------
+
+print("\nLoading local BGE embedding model...")
+
+embeddings = get_local_embeddings()
+
+print("Using local BGE embeddings for ingestion.")
+
+
+# --------------------------------------------------
+# CREATE CHROMA VECTOR DATABASE
+# --------------------------------------------------
 
 print("\nCreating vector database...")
 
-try:
+vectorstore = Chroma.from_documents(
+    documents=chunks,
+    embedding=embeddings,
+    persist_directory="chroma_db"
+)
 
-    vectorstore = Chroma.from_documents(
-        documents=chunks,
-        embedding=embeddings,
-        persist_directory="chroma_db"
-    )
-
-    print("\nRAG knowledge base created successfully!")
-
-except Exception as error:
-
-    if "429" in str(error) or "RESOURCE_EXHAUSTED" in str(error):
-
-        print("\nGemini embedding quota exceeded.")
-        print("Switching to local BGE embeddings...")
-
-        # Remove partially created database
-        import shutil
-        shutil.rmtree("chroma_db", ignore_errors=True)
-
-        local_embeddings = get_local_embeddings()
-        save_provider("local_bge")
-
-        vectorstore = Chroma.from_documents(
-            documents=chunks,
-            embedding=local_embeddings,
-            persist_directory="chroma_db"
-        )
-
-        print("\nRAG knowledge base created using fallback embeddings!")
-
-    else:
-        raise
+print("\nRAG knowledge base created successfully using BGE!")
