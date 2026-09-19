@@ -420,7 +420,7 @@ If the answer is not present in the context, say:
         print("\nTrying Gemini...")
 
         response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.6-flash",
             contents=prompt
         )
 
@@ -455,7 +455,7 @@ If the answer is not present in the context, say:
                 )
 
                 response = groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="openai/gpt-oss-120b",
                     messages=[
                         {
                             "role": "user",
