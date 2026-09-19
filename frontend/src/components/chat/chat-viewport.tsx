@@ -8,14 +8,14 @@ interface ChatViewportProps {
   messages: Message[]
   onSelectSuggestion?: (text: string) => void
   children?: React.ReactNode
-  onScrollToTop?: () => void
+  
 }
 
 export function ChatViewport({
   messages,
   onSelectSuggestion,
   children,
-  onScrollToTop,
+  
 }: ChatViewportProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -29,7 +29,6 @@ export function ChatViewport({
     return (
       <EmptyState
         onSelectSuggestion={onSelectSuggestion}
-        onScrollToTop={onScrollToTop}
       >
         {children}
       </EmptyState>
@@ -56,11 +55,9 @@ export function ChatViewport({
 function EmptyState({
   onSelectSuggestion,
   children,
-  onScrollToTop,
 }: {
   onSelectSuggestion?: (text: string) => void
   children?: React.ReactNode
-  onScrollToTop?: () => void
 }) {
   return (
     <div className="relative w-full flex-1 flex flex-col items-center justify-start overflow-x-hidden pt-16 sm:pt-24">

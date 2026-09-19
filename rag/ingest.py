@@ -1,62 +1,62 @@
 from dotenv import load_dotenv
-from langchain_community.document_loaders import PyPDFDirectoryLoader
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_chroma import Chroma
+
 from rag.chunking.hierarchical import hierarchical_chunk_documents
 from rag.embeddings.local import get_local_embeddings
 
-
-# --------------------------------------------------
-# ENVIRONMENT
-# --------------------------------------------------
-
 load_dotenv()
 
-
-# --------------------------------------------------
-# LOAD PDF DOCUMENTS
-# --------------------------------------------------
-
-loader = PyPDFDirectoryLoader("documents")
-documents = loader.load()
-
-print(f"Loaded {len(documents)} pages")
+CHROMA_PATH = "chroma_db"
 
 
-# --------------------------------------------------
-# HIERARCHICAL CHUNKING
-# --------------------------------------------------
+def ingest_pdf(pdf_path: str):
+    """Process one uploaded PDF and add it to the RAG knowledge base."""
 
-chunks = hierarchical_chunk_documents(documents)
+    print(f"\nIngesting: {pdf_path}")
 
-print(f"Created {len(chunks)} child chunks")
+    # Load PDF
+    loader = PyPDFLoader(pdf_path)
+    documents = loader.load()
+
+    print(f"Loaded {len(documents)} pages")
+
+    # Chunk
+    chunks = hierarchical_chunk_documents(documents)
+
+    print(f"Created {len(chunks)} child chunks")
+
+    if not chunks:
+        raise ValueError("No chunks were created from the PDF.")
+
+    # Embeddings
+    print("Loading local BGE embedding model...")
+    embeddings = get_local_embeddings()
+
+    # Add to existing Chroma database
+    print("Adding chunks to Chroma...")
+
+    vectorstore = Chroma(
+        persist_directory=CHROMA_PATH,
+        embedding_function=embeddings
+    )
+
+    vectorstore.add_documents(chunks)
+
+    print("PDF added to RAG knowledge base successfully.")
+
+    return {
+        "filename": pdf_path,
+        "pages": len(documents),
+        "chunks": len(chunks)
+    }
 
 
-if chunks:
-    print("\nSample chunk metadata:")
-    print(chunks[0].metadata)
+if __name__ == "__main__":
+    # Manual ingestion of everything inside documents/
+    from pathlib import Path
 
+    documents_dir = Path("documents")
 
-# --------------------------------------------------
-# BGE EMBEDDINGS
-# --------------------------------------------------
-
-print("\nLoading local BGE embedding model...")
-
-embeddings = get_local_embeddings()
-
-print("Using local BGE embeddings for ingestion.")
-
-
-# --------------------------------------------------
-# CREATE CHROMA VECTOR DATABASE
-# --------------------------------------------------
-
-print("\nCreating vector database...")
-
-vectorstore = Chroma.from_documents(
-    documents=chunks,
-    embedding=embeddings,
-    persist_directory="chroma_db"
-)
-
-print("\nRAG knowledge base created successfully using BGE!")
+    for pdf in documents_dir.glob("*.pdf"):
+        ingest_pdf(str(pdf))

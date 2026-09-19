@@ -59,18 +59,7 @@ function App() {
     setIsSidebarCollapsed((prev) => !prev);
   }, []);
 
-  // Functional Back to Top (Item 1)
-  const handleScrollToTop = useCallback(() => {
-    if (topAnchorRef.current) {
-      topAnchorRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-    if (mainScrollRef.current) {
-      mainScrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    document.documentElement.scrollTo({ top: 0, behavior: 'smooth' });
-  }, []);
-
+  
   // Functional Scroll Down to Footer/Team (Item 7)
   const handleScrollToFooter = useCallback(() => {
     const footerEl = document.getElementById("meet-the-team-footer");
@@ -210,7 +199,6 @@ function App() {
               <ChatViewport
                 messages={messages}
                 onSelectSuggestion={handleSend}
-                onScrollToTop={handleScrollToTop}
               >
                 {/* In empty state, the chat input sits comfortably below suggestions */}
                 {messages.length === 0 ? chatInputNode : null}
