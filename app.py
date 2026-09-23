@@ -3,10 +3,11 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from pathlib import Path
 import os
-from rag.query import run_rag
+from rag.query import run_rag,  get_report_context
 from rag.ingest import ingest_pdf
 from rag.presentation import create_presentation
 import uuid
+from rag.report import generate_report_content, create_report
 
 # --------------------------------------------------
 # FLASK APP
@@ -292,6 +293,88 @@ def download_presentation(presentation_id):
         as_attachment=True,
         download_name=presentation_path.name
     )
+
+# --------------------------------------------------
+# REPORT GENERATION
+# --------------------------------------------------
+
+@app.route("/reports/generate", methods=["POST"])
+def generate_report():
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"error": "Request body is required"}), 400
+
+    topic = str(data.get("topic", "")).strip()
+    document_ids = data.get("document_ids", [])
+
+    if not topic:
+        return jsonify({"error": "Topic is required"}), 400
+
+    try:
+        print(f"\nGenerating report: {topic}")
+        print(f"Document IDs: {document_ids}")
+
+        report_context = get_report_context(
+            topic,
+            k=12,
+            document_ids=document_ids
+        )
+
+        context = report_context.get("context", "")
+
+        if not context:
+            return jsonify({
+                "error": "No relevant document content found for report generation."
+            }), 400
+
+        report_data = generate_report_content(
+            topic,
+            context=context
+        )
+
+        report_file = create_report(
+            topic,
+            report_data
+        )
+
+        return jsonify({
+            "success": True,
+            "report_id": report_file["report_id"],
+            "filename": report_file["filename"],
+            "download_url": f"/reports/{report_file['report_id']}/download"
+        }), 200
+
+    except Exception as e:
+        print(f"Report generation error: {e}")
+
+        return jsonify({
+            "error": str(e)
+        }), 500
+
+
+@app.route("/reports/<report_id>/download", methods=["GET"])
+def download_report(report_id):
+    try:
+        report_path = Path("generated/reports") / f"{report_id}.pdf"
+
+        if not report_path.exists():
+            return jsonify({
+                "error": "Report not found"
+            }), 404
+
+        from flask import send_file
+
+        return send_file(
+            report_path,
+            as_attachment=True,
+            download_name=f"{report_id}.pdf"
+        )
+
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 500
     
     
 # --------------------------------------------------

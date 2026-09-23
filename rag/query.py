@@ -565,6 +565,220 @@ If the answer is not present in the context, say:
 
 
 # --------------------------------------------------
+# REPORT CONTEXT RETRIEVAL
+# --------------------------------------------------
+
+def get_report_context(topic, k=12, document_ids=None):
+    """
+    Retrieve grounded document context for report generation.
+
+    Uses the same hybrid retrieval approach as the RAG chat:
+    BGE vector search + BM25 + RRF.
+    """
+
+    # -----------------------------------------------
+    # 1. VECTOR SEARCH
+    # -----------------------------------------------
+
+    vector_results = db.similarity_search_with_score(
+        topic,
+        k=k
+    )
+
+    # -----------------------------------------------
+    # 2. LOAD DOCUMENTS FOR BM25
+    # -----------------------------------------------
+
+    all_data = db.get()
+
+    bm25_documents = [
+        Document(
+            page_content=text,
+            metadata=metadata
+        )
+        for text, metadata in zip(
+            all_data["documents"],
+            all_data["metadatas"]
+        )
+    ]
+
+    # -----------------------------------------------
+    # OPTIONAL DOCUMENT FILTER
+    # -----------------------------------------------
+
+    if document_ids:
+        filtered_documents = []
+
+        for doc in bm25_documents:
+            source = str(
+                doc.metadata.get("source", "")
+            )
+
+            source_name = os.path.basename(source)
+            source_id = os.path.splitext(source_name)[0]
+
+            if source_id in document_ids:
+                filtered_documents.append(doc)
+
+        bm25_documents = filtered_documents
+
+        vector_results = [
+            (doc, score)
+            for doc, score in vector_results
+            if os.path.splitext(
+                os.path.basename(
+                    str(doc.metadata.get("source", ""))
+                )
+            )[0] in document_ids
+        ]
+
+    # -----------------------------------------------
+    # 3. BM25 SEARCH
+    # -----------------------------------------------
+
+    if bm25_documents:
+
+        tokenized_documents = [
+            doc.page_content.lower().split()
+            for doc in bm25_documents
+        ]
+
+        bm25 = BM25Okapi(tokenized_documents)
+
+        query_tokens = topic.lower().split()
+
+        bm25_results = bm25.get_top_n(
+            query_tokens,
+            bm25_documents,
+            n=k
+        )
+
+    else:
+        bm25_results = []
+
+    # -----------------------------------------------
+    # 4. RRF FUSION
+    # -----------------------------------------------
+
+    combined = {}
+
+    for rank, (doc, score) in enumerate(
+        vector_results,
+        start=1
+    ):
+        key = doc.page_content
+
+        combined[key] = {
+            "document": doc,
+            "vector_rank": rank,
+            "bm25_rank": None
+        }
+
+    for rank, doc in enumerate(
+        bm25_results,
+        start=1
+    ):
+        key = doc.page_content
+
+        if key not in combined:
+            combined[key] = {
+                "document": doc,
+                "vector_rank": None,
+                "bm25_rank": rank
+            }
+        else:
+            combined[key]["bm25_rank"] = rank
+
+    def rrf_score(vector_rank, bm25_rank, rrf_k=60):
+        score = 0
+
+        if vector_rank is not None:
+            score += 1 / (rrf_k + vector_rank)
+
+        if bm25_rank is not None:
+            score += 1 / (rrf_k + bm25_rank)
+
+        return score
+
+    ranked_results = sorted(
+        combined.values(),
+        key=lambda item: rrf_score(
+            item["vector_rank"],
+            item["bm25_rank"]
+        ),
+        reverse=True
+    )
+
+    # -----------------------------------------------
+    # 5. CLEAN RESULTS
+    # -----------------------------------------------
+
+    final_results = []
+
+    for item in ranked_results:
+
+        doc = item["document"]
+        text = doc.page_content.strip()
+
+        if len(text) < 100:
+            continue
+
+        final_results.append(doc)
+
+        if len(final_results) >= k:
+            break
+
+    # -----------------------------------------------
+    # 6. BUILD REPORT CONTEXT
+    # -----------------------------------------------
+
+    context_parts = []
+
+    for doc in final_results:
+
+        source = doc.metadata.get(
+            "source",
+            "Unknown"
+        )
+
+        page = doc.metadata.get("page")
+
+        if page is not None:
+            page = page + 1
+
+        context_parts.append(
+            f"Source: {source}\n"
+            f"Page: {page}\n"
+            f"{doc.page_content}"
+        )
+
+    context = "\n\n--- DOCUMENT CHUNK ---\n\n".join(
+        context_parts
+    )
+
+    print("\n--- Report Retrieval ---\n")
+    print(f"Topic: {topic}")
+    print(f"Retrieved chunks: {len(final_results)}")
+
+    return {
+        "context": context,
+        "sources": [
+            {
+                "source": doc.metadata.get(
+                    "source",
+                    "Unknown"
+                ),
+                "page": (
+                    doc.metadata.get("page") + 1
+                    if doc.metadata.get("page") is not None
+                    else None
+                )
+            }
+            for doc in final_results
+        ]
+    }
+
+# --------------------------------------------------
 # CLI TEST
 # --------------------------------------------------
 

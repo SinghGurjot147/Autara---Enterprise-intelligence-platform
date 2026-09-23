@@ -75,7 +75,7 @@ export function WorkspaceViews({
     case "analytics":
       return <AnalyticsView onSwitchToAssistant={onSwitchToAssistant} />
     case "reports":
-      return <ReportGeneratorView onGenerate={onSwitchToAssistant} />
+  return <ReportGeneratorView />
     case "presentations":
       return (
         <PresentationGeneratorView
@@ -325,52 +325,271 @@ function AnalyticsView({
 /* =========================================================
    3. REPORT GENERATOR VIEW
    ========================================================= */
-function ReportGeneratorView({
-  onGenerate,
-}: {
-  onGenerate: (prompt: string) => void
-}) {
+function ReportGeneratorView() {
+  const [uploading, setUploading] = useState(false)
+  const [uploadedFile, setUploadedFile] = useState<{
+    name: string
+    document_id: string
+  } | null>(null)
+
+  const [generating, setGenerating] = useState(false)
+  const [result, setResult] = useState<{
+    report_id: string
+    filename: string
+    download_url: string
+  } | null>(null)
+
+  const [error, setError] = useState<string | null>(null)
+
   const templates = [
     {
       title: "Executive Summary",
       desc: "High-level overview of key documents, insights, and critical action points.",
-      prompt: "Generate an Executive Summary report based on the uploaded documents.",
+      prompt: "Generate an Executive Summary report based on the uploaded document.",
     },
     {
       title: "Technical Architecture Audit",
       desc: "Detailed technical breakdown, API interfaces, and system recommendations.",
-      prompt: "Generate a Technical Architecture Audit report based on the repository.",
+      prompt: "Generate a Technical Architecture Audit report based on the uploaded document.",
     },
     {
       title: "Compliance & Security Review",
       desc: "Risk assessment, regulatory checklist, and vulnerability mitigations.",
-      prompt: "Generate a Compliance & Security Review report for enterprise deployment.",
+      prompt: "Generate a Compliance & Security Review report based on the uploaded document.",
     },
     {
       title: "Weekly Intelligence Briefing",
       desc: "Consolidated updates, metric changes, and upcoming priorities.",
-      prompt: "Generate a Weekly Intelligence Briefing summarizing recent discussions.",
+      prompt: "Generate a Weekly Intelligence Briefing based on the uploaded document.",
     },
   ]
 
+  const handleUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0]
+
+    if (!file) return
+
+    if (
+      file.type !== "application/pdf" &&
+      !file.name.toLowerCase().endsWith(".pdf")
+    ) {
+      setError("Only PDF files are supported.")
+      e.target.value = ""
+      return
+    }
+
+    setUploading(true)
+    setError(null)
+    setResult(null)
+
+    try {
+      const formData = new FormData()
+      formData.append("file", file)
+
+      const response = await fetch("/documents", {
+        method: "POST",
+        body: formData,
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || "PDF upload failed.")
+      }
+
+      setUploadedFile({
+        name: data.filename || file.name,
+        document_id: data.document_id,
+      })
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "PDF upload failed."
+      )
+    } finally {
+      setUploading(false)
+      e.target.value = ""
+    }
+  }
+
+  const handleGenerate = async (prompt: string) => {
+    if (!uploadedFile) {
+      setError("Upload a PDF before generating a report.")
+      return
+    }
+
+    if (generating) return
+
+    setGenerating(true)
+    setError(null)
+    setResult(null)
+
+    try {
+      const response = await fetch("/reports/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          topic: prompt,
+          document_ids: [uploadedFile.document_id],
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "Report generation failed."
+        )
+      }
+
+      setResult({
+        report_id: data.report_id,
+        filename: data.filename,
+        download_url: data.download_url,
+      })
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Report generation failed."
+      )
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   return (
     <div className="flex-1 overflow-y-auto px-6 py-8 max-w-5xl mx-auto w-full space-y-6">
+
+      {/* HEADER */}
       <div className="border-b border-white/10 pb-4">
         <h2 className="text-xl font-bold text-white flex items-center gap-2">
           <FileSpreadsheet className="h-5 w-5 text-primary" />
           Report Generator
         </h2>
+
         <p className="text-xs text-muted-foreground mt-0.5">
-          Generate structured multi-page markdown or PDF reports with citation links
+          Generate professional AI-powered reports from an uploaded document
         </p>
       </div>
 
+      {/* SOURCE DOCUMENT */}
+      <div className="rounded-xl bg-white/5 border border-white/10 p-5">
+
+        <div className="flex items-center gap-2 mb-1">
+          <Upload className="h-4 w-4 text-primary" />
+
+          <div className="text-sm font-semibold text-white">
+            Source Document
+          </div>
+        </div>
+
+        <p className="text-xs text-muted-foreground mb-4">
+          Upload a PDF before selecting a report type.
+        </p>
+
+        <label
+          className={`flex flex-col items-center justify-center h-32 rounded-lg border border-dashed border-white/20 bg-black/20 transition-all ${
+            uploading
+              ? "opacity-60 cursor-not-allowed"
+              : "cursor-pointer hover:border-primary/50 hover:bg-primary/5"
+          }`}
+        >
+          <Upload className="h-7 w-7 text-primary mb-2" />
+
+          <span className="text-sm text-white">
+            {uploading
+              ? "Uploading and indexing..."
+              : "Click to upload PDF"}
+          </span>
+
+          <span className="text-[11px] text-muted-foreground mt-1">
+            PDF files only
+          </span>
+
+          <input
+            type="file"
+            accept=".pdf"
+            onChange={handleUpload}
+            disabled={uploading}
+            className="hidden"
+          />
+        </label>
+
+        {/* SELECTED FILE */}
+        {uploadedFile && (
+          <div className="mt-3 flex items-center gap-3 p-3 rounded-lg bg-secondary/50 border border-border/30">
+            <FileText className="h-5 w-5 text-primary" />
+
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-white truncate">
+                {uploadedFile.name}
+              </p>
+
+              <p className="text-xs text-primary mt-1">
+                Document indexed and ready
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ERROR */}
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">
+          {error}
+        </div>
+      )}
+
+      {/* RESULT */}
+      {result && (
+        <div className="rounded-xl bg-primary/5 border border-primary/20 p-4">
+          <div className="flex items-center justify-between gap-4">
+
+            <div>
+              <p className="text-sm font-semibold text-white">
+                Report generated successfully
+              </p>
+
+              <p className="text-xs text-muted-foreground mt-1">
+                {result.filename}
+              </p>
+            </div>
+
+            <a
+              href={result.download_url}
+              target="_blank"
+              rel="noreferrer"
+              className="px-4 py-2 rounded-lg bg-primary text-white text-xs font-medium hover:opacity-90"
+            >
+              Download PDF
+            </a>
+
+          </div>
+        </div>
+      )}
+
+      {/* REPORT TEMPLATES */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
         {templates.map((tpl) => (
           <motion.div
             key={tpl.title}
-            whileHover={{ y: -6, rotateX: 3, rotateY: -2, scale: 1.02 }}
-            style={{ transformStyle: "preserve-3d", perspective: 800 }}
+            whileHover={{
+              y: -6,
+              rotateX: 3,
+              rotateY: -2,
+              scale: 1.02,
+            }}
+            style={{
+              transformStyle: "preserve-3d",
+              perspective: 800,
+            }}
             className="p-5 rounded-xl bg-white/5 border border-white/10 hover:border-primary/40 hover:shadow-xl hover:shadow-primary/10 transition-all flex flex-col justify-between group"
           >
             <div>
@@ -378,19 +597,26 @@ function ReportGeneratorView({
                 <FileText className="h-4 w-4" />
                 {tpl.title}
               </div>
+
               <p className="text-xs text-muted-foreground leading-relaxed">
                 {tpl.desc}
               </p>
             </div>
+
             <Button
-              onClick={() => onGenerate(tpl.prompt)}
-              className="mt-4 w-full bg-white/5 hover:bg-primary/20 hover:text-primary border border-white/10 hover:border-primary/30 text-xs h-8 transition-all"
+              disabled={!uploadedFile || generating}
+              onClick={() => handleGenerate(tpl.prompt)}
+              className="mt-4 w-full bg-white/5 hover:bg-primary/20 hover:text-primary border border-white/10 hover:border-primary/30 text-xs h-8 transition-all disabled:opacity-40"
             >
-              Generate with AI
+              {generating
+                ? "Generating..."
+                : "Generate with AI"}
+
               <ArrowRight className="h-3 w-3 ml-1.5" />
             </Button>
           </motion.div>
         ))}
+
       </div>
     </div>
   )
