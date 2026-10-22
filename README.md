@@ -1,1 +1,2 @@
-# enterprise-intelligence-platform
+
+# Autara — Enterprise Intelligence Platform
